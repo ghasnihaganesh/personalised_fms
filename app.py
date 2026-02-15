@@ -14,21 +14,35 @@ uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
 if uploaded_file:
 
     df = pd.read_csv(uploaded_file)
-    df["datetime"] = pd.to_datetime(df["datetime"])
+
+    # -------- SAFE COLUMN CHECK -------- #
+    required_cols = ["datetime", "amount", "type"]
+    for col in required_cols:
+        if col not in df.columns:
+            st.error(f"❌ Missing required column: {col}")
+            st.stop()
+
+    # Convert datetime safely
+    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    df = df.dropna(subset=["datetime"])
 
     # -------- SPLIT DATA -------- #
-    income_df = df[df["type"]=="CREDIT"]
-    expense_df = df[df["type"]=="DEBIT"]
+    income_df = df[df["type"] == "CREDIT"]
+    expense_df = df[df["type"] == "DEBIT"]
 
     total_income = income_df["amount"].sum()
     total_expense = expense_df["amount"].sum()
-    savings = total_income - total_expense
+
+    # Use absolute for expense math
+    total_expense_abs = abs(total_expense)
+
+    savings = total_income - total_expense_abs
 
     # -------- KPI CARDS -------- #
-    c1,c2,c3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
 
     c1.metric("💵 Total Income", f"₹{total_income:,.0f}")
-    c2.metric("💸 Total Expense", f"₹{total_expense:,.0f}")
+    c2.metric("💸 Total Expense", f"₹{total_expense_abs:,.0f}")
     c3.metric("💰 Net Savings", f"₹{savings:,.0f}")
 
     st.divider()
@@ -36,13 +50,19 @@ if uploaded_file:
     # -------- MONTHLY SUMMARY -------- #
     expense_df["month"] = expense_df["datetime"].dt.to_period("M").astype(str)
 
-    monthly = expense_df.groupby("month")["amount"].sum().reset_index()
-    monthly.columns = ["month","total_expense"]
+    monthly = (
+        expense_df.groupby("month")["amount"]
+        .sum()
+        .abs()
+        .reset_index()
+    )
+
+    monthly.columns = ["month", "total_expense"]
 
     # -------- PREDICTION -------- #
-    prediction = predict_next_month(monthly)
-
-    st.metric("🔮 Predicted Next Month Expense", f"₹{prediction:,.0f}")
+    if len(monthly) >= 2:
+        prediction = predict_next_month(monthly)
+        st.metric("🔮 Predicted Next Month Expense", f"₹{prediction:,.0f}")
 
     st.divider()
 
@@ -60,25 +80,38 @@ if uploaded_file:
     st.plotly_chart(fig, use_container_width=True)
 
     # -------- CATEGORY DONUT -------- #
-    st.subheader("🥧 Spending by Category")
+    if "category" in df.columns:
 
-    cat_sum = expense_df.groupby("category")["amount"].sum().reset_index()
+        st.subheader("🥧 Spending by Category")
 
-    fig2 = px.pie(
-        cat_sum,
-        names="category",
-        values="amount",
-        hole=0.5
-    )
+        cat_sum = (
+            expense_df.groupby("category")["amount"]
+            .sum()
+            .abs()
+            .reset_index()
+        )
 
-    st.plotly_chart(fig2, use_container_width=True)
+        fig2 = px.pie(
+            cat_sum,
+            names="category",
+            values="amount",
+            hole=0.5
+        )
+
+        st.plotly_chart(fig2, use_container_width=True)
 
     # -------- TOP MERCHANTS -------- #
     if "merchant" in df.columns:
 
         st.subheader("🏪 Top Merchants")
 
-        merchants = expense_df.groupby("merchant")["amount"].sum().nlargest(5).reset_index()
+        merchants = (
+            expense_df.groupby("merchant")["amount"]
+            .sum()
+            .abs()
+            .nlargest(5)
+            .reset_index()
+        )
 
         fig3 = px.bar(
             merchants,
@@ -94,24 +127,38 @@ if uploaded_file:
     st.subheader("📊 Budget Plan")
 
     budget_limit = total_income * 0.7
-    progress = total_expense / budget_limit if budget_limit>0 else 0
 
-    st.progress(min(progress,1.0))
+    if budget_limit > 0:
+        progress = total_expense_abs / budget_limit
+
+        # Clamp between 0 and 1
+        progress = max(0.0, min(progress, 1.0))
+    else:
+        progress = 0.0
+
+    st.progress(progress)
     st.write(f"Budget Limit (70% rule): ₹{budget_limit:,.0f}")
+
+    if total_expense_abs > budget_limit:
+        st.error("⚠ Budget exceeded!")
+    else:
+        st.success("✅ Within budget")
 
     st.divider()
 
     # -------- INSIGHTS -------- #
     st.subheader("💡 Insights")
 
-    if total_income > 0:
-        top_cat = cat_sum.sort_values("amount",ascending=False).iloc[0]
-        percent = (top_cat["amount"]/total_income)*100
+    if "category" in df.columns and total_income > 0:
+        top_cat = cat_sum.sort_values("amount", ascending=False).iloc[0]
+        percent = (top_cat["amount"] / total_income) * 100
 
-        if percent>35:
-            st.error(f"⚠ High spending on {top_cat['category']} ({percent:.1f}% of income)")
+        if percent > 35:
+            st.error(
+                f"⚠ High spending on {top_cat['category']} ({percent:.1f}% of income)"
+            )
 
-    if savings<0:
+    if savings < 0:
         st.warning("⚠ Expenses exceed income!")
 
     st.info("💡 Tip: Save at least 30% of income.")
@@ -135,7 +182,6 @@ if uploaded_file:
 
     st.markdown("""
 ### ✅ Recommendations
-
 - Track daily expenses  
 - Follow 50-30-20 rule  
 - Invest via SIP/Mutual Funds  
@@ -146,13 +192,14 @@ if uploaded_file:
 - Invest extra income  
 
 ### 📈 Better Utilization
-
 - Diversify investments  
 - Automate savings  
 - Use reward programs  
-- Avoid high-interest debt  
+- Avoid high-interest debt   
 - Review goals quarterly  
 """)
 
 else:
     st.info("👆 Upload a CSV file to begin analysis.")
+
+
