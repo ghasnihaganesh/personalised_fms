@@ -211,18 +211,40 @@ if uploaded_file:
 
     st.info("💡 Tip: Save at least 30% of income.")
 
-    # =====================================================
-    # DOWNLOAD
-    # =====================================================
-
-    st.divider()
+   # -------- DOWNLOAD -------- #
     st.download_button(
         "📥 Download Monthly Summary",
         data=monthly.to_csv(index=False),
         file_name="monthly_summary.csv"
     )
 
+    st.divider()
+
+    # -------- SMART SAVINGS -------- #
+    st.subheader("💡 Smart Saving Ideas & Better Utilization")
+
+    if savings < 0:
+        st.error("⚠ You are overspending. Focus on essentials.")
+
+    st.markdown("""
+### ✅ Recommendations
+- Track daily expenses  
+- Follow 50-30-20 rule  
+- Invest via SIP/Mutual Funds  
+- Reduce subscriptions  
+- Set savings goals  
+- Build emergency fund  
+- Compare prices before buying  
+- Invest extra income  
+
+### 📈 Better Utilization
+- Diversify investments  
+- Automate savings  
+- Use reward programs  
+- Avoid high-interest debt   
+- Review goals quarterly  
+""")
+
 else:
     st.info("👆 Upload a CSV file to begin analysis.")
-
 
