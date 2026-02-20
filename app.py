@@ -13,41 +13,38 @@ uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
 
 if uploaded_file:
 
+    # ---------------- LOAD DATA ---------------- #
     df = pd.read_csv(uploaded_file)
 
-    # -------- SAFE COLUMN CHECK -------- #
     required_cols = ["datetime", "amount", "type"]
     for col in required_cols:
         if col not in df.columns:
             st.error(f"❌ Missing required column: {col}")
             st.stop()
 
-    # Convert datetime safely
     df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
     df = df.dropna(subset=["datetime"])
 
-    # -------- SPLIT DATA -------- #
+    df["type"] = df["type"].str.upper()
+
+    # ---------------- SPLIT DATA ---------------- #
     income_df = df[df["type"] == "CREDIT"]
     expense_df = df[df["type"] == "DEBIT"]
 
     total_income = income_df["amount"].sum()
     total_expense = expense_df["amount"].sum()
-
-    # Use absolute for expense math
     total_expense_abs = abs(total_expense)
-
     savings = total_income - total_expense_abs
 
-    # -------- KPI CARDS -------- #
+    # ---------------- KPI CARDS ---------------- #
     c1, c2, c3 = st.columns(3)
-
     c1.metric("💵 Total Income", f"₹{total_income:,.0f}")
     c2.metric("💸 Total Expense", f"₹{total_expense_abs:,.0f}")
     c3.metric("💰 Net Savings", f"₹{savings:,.0f}")
 
     st.divider()
 
-    # -------- MONTHLY SUMMARY -------- #
+    # ---------------- MONTHLY SUMMARY ---------------- #
     expense_df["month"] = expense_df["datetime"].dt.to_period("M").astype(str)
 
     monthly = (
@@ -59,29 +56,27 @@ if uploaded_file:
 
     monthly.columns = ["month", "total_expense"]
 
-    # -------- PREDICTION -------- #
+    # ---------------- PREDICTION ---------------- #
     if len(monthly) >= 2:
         prediction = predict_next_month(monthly)
         st.metric("🔮 Predicted Next Month Expense", f"₹{prediction:,.0f}")
 
     st.divider()
 
-    # -------- TREND CHART -------- #
+    # ---------------- TREND CHART ---------------- #
     st.subheader("📈 Monthly Expense Trend")
 
     fig = px.line(
         monthly,
         x="month",
         y="total_expense",
-        markers=True,
-        title="Monthly Expense Trend"
+        markers=True
     )
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # -------- CATEGORY DONUT -------- #
+    # ---------------- CATEGORY CHART ---------------- #
     if "category" in df.columns:
-
         st.subheader("🥧 Spending by Category")
 
         cat_sum = (
@@ -100,9 +95,8 @@ if uploaded_file:
 
         st.plotly_chart(fig2, use_container_width=True)
 
-    # -------- TOP MERCHANTS -------- #
+    # ---------------- TOP MERCHANTS ---------------- #
     if "merchant" in df.columns:
-
         st.subheader("🏪 Top Merchants")
 
         merchants = (
@@ -117,21 +111,80 @@ if uploaded_file:
             merchants,
             x="amount",
             y="merchant",
-            orientation="h",
-            title="Top 5 Merchants"
+            orientation="h"
         )
 
         st.plotly_chart(fig3, use_container_width=True)
 
-    # -------- BUDGET PLAN -------- #
+    # =====================================================
+    # SMART FINANCIAL INTELLIGENCE MODULE
+    # =====================================================
+
+    st.divider()
+    st.subheader("🧠 Smart Financial Intelligence")
+
+    if not expense_df.empty:
+
+        expense_df["abs_amount"] = expense_df["amount"].abs()
+
+        # 1️⃣ Recurring Detection
+        recurring = (
+            expense_df.groupby(["merchant", "abs_amount"])
+            .size()
+            .reset_index(name="count")
+        )
+
+        recurring = recurring[recurring["count"] >= 3]
+
+        if not recurring.empty:
+            st.subheader("🔁 Recurring Payment Alerts")
+            for _, row in recurring.iterrows():
+                st.warning(
+                    f"Recurring payment detected: ₹{row['abs_amount']:,.0f} "
+                    f"paid to {row['merchant']} ({row['count']} times)"
+                )
+
+        # 2️⃣ Spending Spike
+        if len(monthly) >= 2:
+            last = monthly.iloc[-1]["total_expense"]
+            prev = monthly.iloc[-2]["total_expense"]
+
+            if last > prev * 1.25:
+                st.error("⚠ Sudden spending spike detected.")
+            elif last < prev * 0.75:
+                st.success("📉 Spending reduced compared to last month.")
+
+        # 3️⃣ Financial Health Score
+        if total_income > 0:
+            ratio = savings / total_income
+
+            if ratio >= 0.3:
+                score = 90
+                status = "Excellent"
+            elif ratio >= 0.2:
+                score = 75
+                status = "Good"
+            elif ratio >= 0.1:
+                score = 50
+                status = "Average"
+            else:
+                score = 30
+                status = "Poor"
+
+            st.metric("💎 Financial Health Score", f"{score}/100")
+            st.write(f"Financial Status: **{status}**")
+
+    # =====================================================
+    # BUDGET PLAN
+    # =====================================================
+
+    st.divider()
     st.subheader("📊 Budget Plan")
 
     budget_limit = total_income * 0.7
 
     if budget_limit > 0:
         progress = total_expense_abs / budget_limit
-
-        # Clamp between 0 and 1
         progress = max(0.0, min(progress, 1.0))
     else:
         progress = 0.0
@@ -144,60 +197,30 @@ if uploaded_file:
     else:
         st.success("✅ Within budget")
 
-    st.divider()
+    # =====================================================
+    # INSIGHTS
+    # =====================================================
 
-    # -------- INSIGHTS -------- #
+    st.divider()
     st.subheader("💡 Insights")
 
-    if "category" in df.columns and total_income > 0:
-        top_cat = cat_sum.sort_values("amount", ascending=False).iloc[0]
-        percent = (top_cat["amount"] / total_income) * 100
-
-        if percent > 35:
-            st.error(
-                f"⚠ High spending on {top_cat['category']} ({percent:.1f}% of income)"
-            )
-
     if savings < 0:
-        st.warning("⚠ Expenses exceed income!")
+        st.error("🚨 Negative savings trend detected.")
+    elif savings > total_income * 0.3:
+        st.success("🎯 Strong savings performance!")
 
     st.info("💡 Tip: Save at least 30% of income.")
 
-    st.divider()
+    # =====================================================
+    # DOWNLOAD
+    # =====================================================
 
-    # -------- DOWNLOAD -------- #
+    st.divider()
     st.download_button(
         "📥 Download Monthly Summary",
         data=monthly.to_csv(index=False),
         file_name="monthly_summary.csv"
     )
-
-    st.divider()
-
-    # -------- SMART SAVINGS -------- #
-    st.subheader("💡 Smart Saving Ideas & Better Utilization")
-
-    if savings < 0:
-        st.error("⚠ You are overspending. Focus on essentials.")
-
-    st.markdown("""
-### ✅ Recommendations
-- Track daily expenses  
-- Follow 50-30-20 rule  
-- Invest via SIP/Mutual Funds  
-- Reduce subscriptions  
-- Set savings goals  
-- Build emergency fund  
-- Compare prices before buying  
-- Invest extra income  
-
-### 📈 Better Utilization
-- Diversify investments  
-- Automate savings  
-- Use reward programs  
-- Avoid high-interest debt   
-- Review goals quarterly  
-""")
 
 else:
     st.info("👆 Upload a CSV file to begin analysis.")
